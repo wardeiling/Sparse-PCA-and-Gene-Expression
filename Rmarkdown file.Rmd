@@ -52,7 +52,7 @@ A few quickly made observations: it seems that the tumors have less variance in 
 
 ```{r}
 #cell for doing PCA
-#pkasdjvjbadcbajbfa'jbn'kl
+
 
 
 ```
