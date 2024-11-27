@@ -43,8 +43,30 @@ Data %>%
 ```
 A few quickly made observations: it seems that the tumors have less variance in the gene expressions (but this is based only on 3 plots, so could be wrong)
 
+```{r}
+#cell for doing logistic regression
 
 
+```
+
+
+```{r}
+#cell for doing PCA
+
+
+
+```
+
+
+
+
+
+
+```{r}
+#cell for doing log.res. on Principal components
+
+
+```
 
 
 
