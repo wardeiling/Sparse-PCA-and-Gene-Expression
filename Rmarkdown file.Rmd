@@ -35,7 +35,7 @@ https://rdrr.io/cran/spls/man/prostate.html
 
 # Data visualization
 ```{r}
-# making a few visualisations of the data
+# making a few visualizations of the data
 Data %>%
   ggplot(aes(x = X1)) + 
   geom_boxplot() + 
@@ -56,7 +56,7 @@ Data %>%
 mean_gene_exp <- colMeans(x)
 class_df <- data.frame(MeanExpression = mean_gene_exp, 
                        Class = factor(y, labels = c("Normal", "Tumor")))
-  
+
 ```
 
 A few quickly made observations: it seems that the tumors have less variance in the gene expressions (but this is based only on 3 plots, so could be wrong)
@@ -64,7 +64,28 @@ A few quickly made observations: it seems that the tumors have less variance in 
 
 # Logistic regression
 ```{r}
-#cell for doing logistic regression
+## TRAIN / TEST DATA SPLIT
+# divide data in train/test data split (80/20%)
+data_splits <- Data %>% mutate(splits = sample(rep(c("train", "test"), times = c(82, 20))))
+
+# obtain individual train/test data set by filtering on splits column
+train <- data_splits %>% filter(splits == "train")
+test <- data_splits %>% filter(splits == "test")
+
+
+## LOGISTIC REGRESSION 
+# apply logistic regression on data
+glm_genexp <- glm(y ~ ., family = "gaussian",
+                  data = train %>% select(-splits))
+
+# obtain predicted probabilities of train data
+predict(glm_genexp, newdata = train, type = "response")
+
+
+
+# obtain predicted probabilities of test data
+predict(glm_genexp, newdata = test, type = "response")
+
 
 
 ```
