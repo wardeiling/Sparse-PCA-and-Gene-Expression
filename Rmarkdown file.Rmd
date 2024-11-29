@@ -25,8 +25,8 @@ Data <- Data %>% rename(disease = y)
 
 # explore data
 nrow(Data) #102 samples -> 52 tumor samples, 50 normal tissue samples
-ncol(Data) #6034 genes
-class(Data)
+ncol(Data) #6034 genes included in data set
+class(Data) #dataframe 
 head(Data)
 ```
 
@@ -37,10 +37,25 @@ https://rdrr.io/cran/spls/man/prostate.html
 # Data visualization
 ```{r}
 # making a few visualizations of the data
+
+# boxplot for possible tumor promoting gene
 Data %>%
-  ggplot(aes(x = X1)) + 
-  geom_boxplot() + 
-  facet_wrap(vars(y))
+  mutate(disease = ifelse(disease == 0, "normal", "tumor")) %>%
+  ggplot(aes(y = X54, fill = disease)) + 
+  geom_boxplot() +
+  labs(y = "Gene expression of gen X54", title = "Expression level of gene X54 in normal vs tumor sample") +
+  theme(axis.text.x = element_blank()) + 
+  facet_wrap(vars(disease))
+
+
+# boxplot for possible tumor supressing gene
+Data %>%
+  mutate(disease = ifelse(disease == 0, "normal", "tumor")) %>%
+  ggplot(aes(y = X2022, fill = disease)) + 
+  geom_boxplot() +
+  labs(y = "Gene expression of gen X2022", title = "Expression level of gene X2022 in normal vs tumor sample") +
+  theme(axis.text.x = element_blank()) + 
+  facet_wrap(vars(disease))
 
 ```
 
