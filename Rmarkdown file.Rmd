@@ -10,7 +10,6 @@ Importing packages:
 library(ggplot2)
 library(tidyverse)
 library(spls)
-library(pheatmap)
 ```
 # Importing and editing data
 -> problem?! gene names are gone in Data dataframe
@@ -21,12 +20,14 @@ x = prostate$x
 y = prostate$y
 Data = data.frame(x,y)
 
-
+# rename column y to tumor
+Data <- Data %>% rename(disease = y)
 
 # explore data
 nrow(Data) #102 samples -> 52 tumor samples, 50 normal tissue samples
 ncol(Data) #6034 genes
 class(Data)
+head(Data)
 ```
 
 The prostate dataset consists of 52 prostate tumor and 50 normal samples. Normal and tumor classes are coded in 0 and 1, respectively, in y vector. Matrix x is gene expression data and arrays were normalized, log transformed, and standardized to zero mean and unit variance across genes as described in Dettling (2004) and Dettling and Beuhlmann (2002). See Chung and Keles (2010) for more details.
@@ -41,25 +42,11 @@ Data %>%
   geom_boxplot() + 
   facet_wrap(vars(y))
 
-Data %>%
-  ggplot(aes(x = X2)) + 
-  geom_boxplot() + 
-  facet_wrap(vars(y))
-
-Data %>%
-  ggplot(aes(x = X3)) + 
-  geom_boxplot() + 
-  facet_wrap(vars(y))
-
-
-# visualization of mean gene expressions from tumor vs normal samples
-mean_gene_exp <- colMeans(x)
-class_df <- data.frame(MeanExpression = mean_gene_exp, 
-                       Class = factor(y, labels = c("Normal", "Tumor")))
-
 ```
 
 A few quickly made observations: it seems that the tumors have less variance in the gene expressions (but this is based only on 3 plots, so could be wrong)
+
+```
 
 
 # Logistic regression
