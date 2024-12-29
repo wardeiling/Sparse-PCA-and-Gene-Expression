@@ -10,6 +10,7 @@ Importing packages:
 library(ggplot2)
 library(tidyverse)
 library(spls)
+library(tensorflow)
 ```
 
 importing and editing data
@@ -52,8 +53,15 @@ A few quickly made observations: it seems that the tumors have less variance in 
 
 ```{r}
 #cell for doing PCA
+Data = as.matrix(Data) %>%
+  scale(scale = FALSE)
 
+Data.pca = prcomp(Data,
+                  center = TRUE,
+                  scale = TRUE)
+summary(Data.pca)
 
+Data.pca$x[,1] #gives scores of principal component 1 for all data points, these are used as the variables for fitting the logistic regression model.
 
 ```
 
