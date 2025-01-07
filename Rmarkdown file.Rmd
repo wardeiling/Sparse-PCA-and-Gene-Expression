@@ -11,33 +11,38 @@ library(ggplot2)
 library(tidyverse)
 library(spls)
 library(tensorflow)
+library(caret)
 ```
-# Importing and editing data
--> problem?! gene names are gone in Data dataframe
-```{r}
-# import and editing data
-data(prostate)
-x = prostate$x
-y = prostate$y
-Data = data.frame(x,y)
 
-# rename column y to tumor
-Data <- Data %>% rename(disease = y)
+# Importing and Mutating Data
+
+-> problem?! gene names are gone in Data dataframe
+
+```{r}
+# import and mutate Data
+data(prostate)
+x <- prostate$x
+y <- prostate$y
+
+Data <- data.frame(y, x) %>% 
+  # rename column y to tumor
+  rename(disease = y)
 
 # explore data
 nrow(Data) #102 samples -> 52 tumor samples, 50 normal tissue samples
 ncol(Data) #6034 genes included in data set
-class(Data) #dataframe 
-head(Data)
+all(sapply(Data, is.numeric)) # TRUE, all variables are operationalized as numeric
+head(Data, 10)
 ```
 
-The prostate dataset consists of 52 prostate tumor and 50 normal samples. Normal and tumor classes are coded in 0 and 1, respectively, in y vector. Matrix x is gene expression data and arrays were normalized, log transformed, and standardized to zero mean and unit variance across genes as described in Dettling (2004) and Dettling and Beuhlmann (2002). See Chung and Keles (2010) for more details.
+The prostate dataset consists of 52 prostate tumor and 50 normal samples. Normal and tumor classes are coded in 0 and 1, respectively, in $Y$ vector. Matrix $X$ is gene expression data and arrays were normalized, log transformed, and standardized to zero mean and unit variance across genes as described in Dettling (2004) and Dettling and Beuhlmann (2002). See Chung and Keles (2010) for more details.
 
 https://rdrr.io/cran/spls/man/prostate.html
 
 # Data visualization
+
 ```{r}
-# making a few visualizations of the data
+### making a few visualizations of the data
 
 # boxplot for possible tumor promoting gene
 Data %>%
@@ -57,54 +62,183 @@ Data %>%
   labs(y = "Gene expression of gen X2022", title = "Expression level of gene X2022 in normal vs tumor sample") +
   theme(axis.text.x = element_blank()) + 
   facet_wrap(vars(disease))
-
 ```
 
 A few quickly made observations: it seems that the tumors have less variance in the gene expressions (but this is based only on 3 plots, so could be wrong)
 
+```{r}
+# compute the average sd in gene expressions for normal and tumor samples
+normal <- Data %>% filter(disease == 0) %>% dplyr::select(-disease)
+tumor <- Data %>% filter(disease == 1) %>% dplyr::select(-disease)
+normal_sd <- apply(normal, 2, sd)
+tumor_sd <- apply(tumor, 2, sd)
+
+data_sd <- data.frame(normal = normal_sd, tumor = tumor_sd) %>%
+  pivot_longer(cols = everything(), names_to = "disease", values_to = "sd")
+
+# visualize the average sd in gene expressions for normal and tumor samples using boxplot
+ggplot(data_sd, aes(x = disease, y = sd, fill = disease)) +
+  geom_boxplot() +
+  labs(y = "Average standard deviation in gene expressions", title = "Average standard deviation in gene expressions for normal and tumor samples")
 ```
 
+There does not seem to be massive variation in the standard deviations of gene expressions between normal and tumor samples. However, we do generally see that the standard deviations are lower in the tumor samples compared to the normal samples, especially since there are less high outliers for the tumor samples.
 
-# Logistic regression
+# Step-wise Logistic regression
+
 ```{r}
 ## TRAIN / TEST DATA SPLIT
 # divide data in train/test data split (80/20%)
-data_splits <- Data %>% mutate(splits = sample(rep(c("train", "test"), times = c(82, 20))))
 
-# obtain individual train/test data set by filtering on splits column
-train <- data_splits %>% filter(splits == "train")
-test <- data_splits %>% filter(splits == "test")
+# function ensures that the proportion of the outcome variable is preserved in both sets.
+set.seed(123)
+training.samples <- Data$disease %>%
+  createDataPartition(p = 0.8, list = FALSE) 
+train.data <- Data[training.samples, ]
+test.data <- Data[-training.samples, ]
+dim(train.data)
+dim(test.data)
 
+# # Optional: Automatically add quadratic terms for all predictors
+# predictors <- colnames(train.data)[-which(colnames(train.data) == "disease")]
+# quadratic_data <- train.data
+# for (pred in predictors) {
+#   quadratic_data[[paste0(pred, "_sq")]] <- train.data[[pred]]^2
+# }
+# 
+# # Update the dataset
+# train.data <- quadratic_data
 
-## LOGISTIC REGRESSION 
-# apply logistic regression on data
-glm_genexp <- glm(y ~ ., family = "gaussian",
-                  data = train %>% select(-splits))
+# fit logistic regression models
+intercept.model <- glm(disease ~ 1, family = "binomial", data = train.data)
+full.model <- glm(disease ~ ., family = "binomial", data = train.data) 
+summary(full.model)
 
-# obtain predicted probabilities of train data
-predict(glm_genexp, newdata = train, type = "response")
+# probit.model <- glm(disease ~ ., family = binomial(link = "probit"), data = train.data) # no parameter significant
+# summary(probit.model)
+# cloglog.model <- glm(disease ~ ., family = binomial(link = "cloglog"), data = train.data) # no parameter significant
+# summary(cloglog.model)
+# identity.model <- glm(disease ~ ., family = binomial(link = "identity"), data = train.data) # "no valid set of coefficients has been found: please supply starting values"
+# there is a clear issue of multicollinearity 
+# warning "5952 not defined because of singularities"
 
+# Perform stepwise logistic regression
+library(MASS)
+step.model <- stepAIC(object = intercept.model, direction = "both", 
+                      scope = full.model, trace = FALSE)
 
+# step.model2 <- stepAIC(object = intercept.model, direction = "backward", 
+#                       scope = full.model, trace = FALSE)
+# 
+# step.model3 <- stepAIC(object = intercept.model, direction = "forward", 
+#                       scope = full.model, trace = FALSE)
 
-# obtain predicted probabilities of test data
-predict(glm_genexp, newdata = test, type = "response")
+# Predict probabilities and classify on validation set
+predictions <- predict(step.model, newdata = test.data, type = "response") # all predictions are identical as the intercept is the only parameter in the final model
+pred_class <- ifelse(predictions > 0.5, 1, 0) # and since the intercept is slightly greater then 0.5, all predictions are 1
 
+# Compute confusion matrix
+cm <- confusionMatrix(factor(pred_class), factor(test.data$disease), positive = "1")
+cm
+  
+# Compute AUC
+roc_curve <- roc(factor(test.data$disease), predictions)
+auc(roc_curve)
 
+# draw ROC curve
+plot(roc_curve, col = "blue", lwd = 2, main = "ROC curve for logistic regression model")
+```
+Let's now do it with 5-fold cross-validation
 
+```{r}
+# Load required libraries
+library(caret)
+library(pROC)
+
+# Define 5-fold cross-validation
+set.seed(123)
+folds <- createFolds(train.data$disease, k = 5, list = TRUE, returnTrain = TRUE)
+
+# Initialize vectors to store performance metrics
+accuracy <- c()
+sensitivity <- c()
+specificity <- c()
+auc <- c()
+
+# Perform 5-fold CV
+for (i in 1:5) {
+  # Split the data into training and validation sets
+  fold_train <- train.data[folds[[i]], ]
+  fold_test <- train.data[-folds[[i]], ]
+  
+  # Fit intercept and full models
+  intercept.model <- glm(disease ~ 1, family = "binomial", data = fold_train)
+  full.model <- glm(disease ~ ., family = "binomial", data = fold_train)
+  
+  # Perform stepwise logistic regression
+  step.model <- stepAIC(intercept.model, direction = "both", 
+                        scope = full.model, trace = FALSE)
+  
+  # Predict probabilities and classify on validation set
+  predictions <- predict(step.model, newdata = fold_test, type = "response")
+  pred_class <- ifelse(predictions > 0.5, 1, 0)
+  
+  # Compute confusion matrix
+  cm <- confusionMatrix(factor(pred_class), factor(fold_test$disease), positive = "1")
+  
+  # Compute metrics
+  accuracy[i] <- cm$overall["Accuracy"]
+  sensitivity[i] <- cm$byClass["Sensitivity"]
+  specificity[i] <- cm$byClass["Specificity"]
+  
+  # Compute AUC
+  roc_curve <- roc(factor(fold_test$disease), predictions)
+  auc[i] <- auc(roc_curve)
+}
+
+# Print the results
+cat("5-Fold Cross-Validation Results:\n")
+cat("Accuracy:", accuracy, "\n")
+cat("Sensitivity:", sensitivity, "\n")
+cat("Specificity:", specificity, "\n")
+cat("AUC:", auc, "\n")
+
+# the accuracy is between 0.375 and 0.588, which is not very good
+# either the sensitivity or specificity is 1, there is no in-between, indicating that the model
+# is either good at predicting the positive class or the negative class, but not both.
+# the AUC is consistent at 0.5, which is the same as random guessing
+
+# Calculate average metrics
+avg_accuracy <- mean(accuracy)
+avg_sensitivity <- mean(sensitivity)
+avg_specificity <- mean(specificity)
+avg_auc <- mean(auc)
 ```
 
 # Principle component analysis (PCA)
+
+what is selection strategy?
+
+-   components explaining a cumulative variance of 95% were retained and used as predictors in logistic regression
+-   scree plot?
+
 ```{r}
+# remove the outcome
+Data_pred <- Data %>% dplyr::select(-disease)
+
 #cell for doing PCA
-Data = as.matrix(Data) %>%
-  scale(scale = FALSE)
+Data_pred <- as.matrix(Data_pred)
 
 Data.pca = prcomp(Data,
-                  center = TRUE,
-                  scale = TRUE)
+                  center = FALSE, # arrays were already normalized and centered
+                  scale = FALSE)
 summary(Data.pca)
 
+# make scree plot
+screeplot(Data.pca, type = "lines", main = "Scree plot of PCA")
+
 Data.pca$x[,1] #gives scores of principal component 1 for all data points, these are used as the variables for fitting the logistic regression model.
+
 
 ```
 
