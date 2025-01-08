@@ -84,7 +84,7 @@ ggplot(data_sd, aes(x = disease, y = sd, fill = disease)) +
 
 There does not seem to be massive variation in the standard deviations of gene expressions between normal and tumor samples. However, we do generally see that the standard deviations are lower in the tumor samples compared to the normal samples, especially since there are less high outliers for the tumor samples.
 
-# Step-wise Logistic regression
+# Method 1: Hybrid step-wise Logistic regression
 
 ```{r}
 ## TRAIN / TEST DATA SPLIT
@@ -215,7 +215,7 @@ avg_specificity <- mean(specificity)
 avg_auc <- mean(auc)
 ```
 
-# Principle component analysis (PCA)
+# Method 2: Principle component analysis (PCA) with logistic regression
 
 what is selection strategy?
 
@@ -223,33 +223,140 @@ what is selection strategy?
 -   scree plot?
 
 ```{r}
+library(pls)
+?pcr()
+
 # remove the outcome
-Data_pred <- Data %>% dplyr::select(-disease)
+Data_pca <- Data %>% dplyr::select(-disease)
+# summary(Data_pca[,1:30])
+Data_pca <- as.matrix(Data_pca)
 
-#cell for doing PCA
-Data_pred <- as.matrix(Data_pred)
-
-Data.pca = prcomp(Data,
+Data.pca = prcomp(Data_pca,
                   center = FALSE, # arrays were already normalized and centered
                   scale = FALSE)
-summary(Data.pca)
+
+Data.pca.stand = prcomp(Data_pca,
+                  center = TRUE, # sensitivity analysis
+                  scale = TRUE)
+
+# evaluate cumulative variance
+summary(Data.pca) 
+which(cumsum(Data.pca$sdev^2) / sum(Data.pca$sdev^2) >= 0.95)[1] # 33 components are needed to explain 95% of the variance
+summary(Data.pca.stand) 
+which(cumsum(Data.pca.stand$sdev^2) / sum(Data.pca.stand$sdev^2) >= 0.95)[1] # 67 components are needed to explain 95% of the variance
+# either lower threshold (e.g., 0.90 or use scree plot to determine number of components)
 
 # make scree plot
-screeplot(Data.pca, type = "lines", main = "Scree plot of PCA")
+screeplot(Data.pca, type = "lines", main = "Scree plot of PCA") # two components before the elbow
+screeplot(Data.pca.stand, type = "lines", main = "Scree plot of PCA standardized") # one component before the elbow
 
-Data.pca$x[,1] #gives scores of principal component 1 for all data points, these are used as the variables for fitting the logistic regression model.
+### Continue with unstandardized PCA and 2 components according to scree plot
+
+# predi
+pcs <- predict(Data.pca, newdata = Data_pca, 2)[, 1:2]
+
+# fit logistic regression model
+model <- glm(as.factor(Data$disease) ~ ., family = "binomial", data = data.frame(disease = Data$disease, train_pcs))
+model <- glm(as.factor(disease) ~ ., family = "binomial", data = train_df)
 
 
 ```
 
+Let's now implement the 5-fold cross-validation
 
-
-# Comparison of logistic regression and PCA
 ```{r}
-#cell for doing log.res. on Principal components
 
+library(caret)     # For cross-validation
+library(pROC)      # For AUC calculation
+library(dplyr)     # For data manipulation
 
+# Step 1: Set up cross-validation
+set.seed(123)
+folds <- createFolds(Data$disease, k = 5, list = TRUE)  # 5-fold CV
+
+# Step 2: Cross-validation loop with PCA on training data
+results <- data.frame(Components = numeric(),
+                      Accuracy = numeric(),
+                      AUC = numeric())
+
+components_to_test <- seq(2, 33)  # Test up to 50 components (or adjust based on your data)
+
+for (num_components in components_to_test) {
+  metrics <- data.frame(Accuracy = numeric(), AUC = numeric())
+  
+  for (i in seq_along(folds)) {
+    # Split data into training and testing folds
+    train_idx <- unlist(folds[-i])
+    test_idx <- folds[[i]]
+    train_data <- Data[train_idx, ]
+    test_data <- Data[test_idx, ]
+    
+    # Step 3: Perform PCA on training data
+    train_pca <- train_data %>% dplyr::select(-disease) %>% as.matrix()
+    test_pca <- test_data %>% dplyr::select(-disease) %>% as.matrix()
+    
+    pca_model <- prcomp(train_pca, center = FALSE, scale = FALSE)  # Fit PCA on training data
+    
+    # Step 4: Transform both training and testing data using the same PCA model 
+    train_pcs <- pca_model$x[, 1:num_components]  # Select top N components for training data
+    test_pcs <- predict(pca_model, newdata = test_pca)[, 1:num_components]  # Transform test data
+    
+    # Combine PCs with the outcome variable
+    train_df <- data.frame(disease = train_data$disease, train_pcs)
+    test_df <- data.frame(disease = test_data$disease, test_pcs)
+    
+    # Step 5: Fit logistic regression
+    model <- glm(as.factor(disease) ~ ., family = "binomial", data = train_df)
+    
+    # Step 6: Predict on the test set
+    pred_probs <- predict(model, newdata = test_df, type = "response")
+    pred_class <- ifelse(pred_probs > 0.5, 1, 0)
+    
+    # Calculate metrics
+    accuracy <- mean(pred_class == test_df$disease)
+    auc <- roc(as.factor(test_df$disease), pred_probs)$auc
+    
+    # Store metrics for the fold
+    metrics <- rbind(metrics, data.frame(Accuracy = accuracy, AUC = auc))
+  }
+  
+  # Average metrics across folds
+  avg_accuracy <- mean(metrics$Accuracy)
+  avg_auc <- mean(metrics$AUC)
+  
+  # Store results
+  results <- rbind(results, data.frame(Components = num_components,
+                                       Accuracy = avg_accuracy,
+                                       AUC = avg_auc))
+}
+
+# Step 7: Find the optimal number of components
+optimal_components <- results %>% 
+  filter(AUC == max(AUC)) %>% 
+  select(Components) %>% 
+  pull()
+
+# Step 8: Visualize results
+library(ggplot2)
+
+ggplot(results, aes(x = Components)) +
+  geom_line(aes(y = AUC, color = "AUC")) +
+  geom_line(aes(y = Accuracy, color = "Accuracy")) +
+  labs(title = "5-Fold Cross-Validation Results",
+       x = "Number of Principal Components",
+       y = "Metric") +
+  scale_color_manual(values = c("AUC" = "blue", "Accuracy" = "red")) +
+  theme_minimal()
+
+# Print optimal number of components
+cat("Optimal number of components:", optimal_components, "\n")
+
+# save results to rds
+saveRDS(results, "results_pca.rds")
 ```
+
+
+# Method 3: Sparse PCA with logistic regression
 
 
 
