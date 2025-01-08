@@ -6,12 +6,19 @@ output: pdf_document
 ---
 
 Importing packages:
+
 ```{r} 
 library(ggplot2)
 library(tidyverse)
 library(spls)
 library(tensorflow)
 library(caret)
+library(caret)
+library(pROC)
+library(pls)
+library(caret)     # For cross-validation
+library(pROC)      # For AUC calculation
+library(dplyr)     # For data manipulation
 ```
 
 # Importing and Mutating Data
@@ -151,10 +158,6 @@ plot(roc_curve, col = "blue", lwd = 2, main = "ROC curve for logistic regression
 Let's now do it with 5-fold cross-validation
 
 ```{r}
-# Load required libraries
-library(caret)
-library(pROC)
-
 # Define 5-fold cross-validation
 set.seed(123)
 folds <- createFolds(train.data$disease, k = 5, list = TRUE, returnTrain = TRUE)
@@ -217,17 +220,10 @@ avg_auc <- mean(auc)
 
 # Method 2: Principle component analysis (PCA) with logistic regression
 
-what is selection strategy?
-
--   components explaining a cumulative variance of 95% were retained and used as predictors in logistic regression
--   scree plot?
-
 ```{r}
-library(pls)
-?pcr()
-
 # remove the outcome
 Data_pca <- Data %>% dplyr::select(-disease)
+
 # summary(Data_pca[,1:30])
 Data_pca <- as.matrix(Data_pca)
 
@@ -251,25 +247,12 @@ screeplot(Data.pca, type = "lines", main = "Scree plot of PCA") # two components
 screeplot(Data.pca.stand, type = "lines", main = "Scree plot of PCA standardized") # one component before the elbow
 
 ### Continue with unstandardized PCA and 2 components according to scree plot
-
-# predi
-pcs <- predict(Data.pca, newdata = Data_pca, 2)[, 1:2]
-
-# fit logistic regression model
-model <- glm(as.factor(Data$disease) ~ ., family = "binomial", data = data.frame(disease = Data$disease, train_pcs))
-model <- glm(as.factor(disease) ~ ., family = "binomial", data = train_df)
-
-
+pc_scores <- predict(Data.pca, newdata = Data_pca, 2)[, 1:2]
 ```
 
-Let's now implement the 5-fold cross-validation
+Let's now implement the 5-fold cross-validation to assess what number of principal components.
 
 ```{r}
-
-library(caret)     # For cross-validation
-library(pROC)      # For AUC calculation
-library(dplyr)     # For data manipulation
-
 # Step 1: Set up cross-validation
 set.seed(123)
 folds <- createFolds(Data$disease, k = 5, list = TRUE)  # 5-fold CV
@@ -279,7 +262,7 @@ results <- data.frame(Components = numeric(),
                       Accuracy = numeric(),
                       AUC = numeric())
 
-components_to_test <- seq(2, 33)  # Test up to 50 components (or adjust based on your data)
+components_to_test <- seq(2, 33)  # Test up to 33 components
 
 for (num_components in components_to_test) {
   metrics <- data.frame(Accuracy = numeric(), AUC = numeric())
@@ -330,15 +313,31 @@ for (num_components in components_to_test) {
                                        AUC = avg_auc))
 }
 
-# Step 7: Find the optimal number of components
-optimal_components <- results %>% 
+# Step 7: Find the optimal number of components based on AUC and Accuracy
+optimal_components_AUC <- results %>% 
   filter(AUC == max(AUC)) %>% 
-  select(Components) %>% 
+  dplyr::select(Components) %>% 
+  pull()
+
+optimal_components_accuracy <- results %>% 
+  filter(Accuracy == max(Accuracy)) %>% 
+  dplyr::select(Components) %>% 
+  pull()
+
+# now filter first only components on PC smaller than or equal to 15
+optimal_components_AUC_selected <- results %>% 
+  filter(Components <= 15) %>% 
+  filter(AUC == max(AUC)) %>% 
+  dplyr::select(Components) %>% 
+  pull()
+
+optimal_components_accuracy_selected <- results %>%
+  filter(Components <= 15) %>% 
+  filter(Accuracy == max(Accuracy)) %>% 
+  dplyr::select(Components) %>% 
   pull()
 
 # Step 8: Visualize results
-library(ggplot2)
-
 ggplot(results, aes(x = Components)) +
   geom_line(aes(y = AUC, color = "AUC")) +
   geom_line(aes(y = Accuracy, color = "Accuracy")) +
@@ -349,12 +348,27 @@ ggplot(results, aes(x = Components)) +
   theme_minimal()
 
 # Print optimal number of components
-cat("Optimal number of components:", optimal_components, "\n")
+cat("Optimal number of components based on AUC:", optimal_components_AUC, "\n")
+cat("Optimal number of components based on Accuracy:", optimal_components_accuracy, "\n")
+cat("Optimal number of components based on AUC (under 15 PC):", optimal_components_AUC_selected, "\n")
+cat("Optimal number of components based on Accuracy (under 15 PC):", optimal_components_accuracy_selected, "\n")
 
 # save results to rds
 saveRDS(results, "results_pca.rds")
 ```
 
+See what is recommended by the books that we use. In principal component regression, the number of components is selected by looking at the squared bias, test MSE and variance.
+
+"We note that even though PCR provides a simple way to perform regression using M <p predictors, it is not a feature selection method. This is because each of the M principal components used in the regression is a linear combination of all p of the original features" (ISLR, p. 259)
+
+"In PCR, the number of principal components, M, is typically chosen by
+cross-validation." (ISLR, p. 259)
+
+> Compute cross-validation MSE, which is obtained using PCR as a function of the number of components.
+
+"However, if the variables are all measured in the same units (say, kilograms, or inches), then one might choose not to standardize them"
+
+> we choose not to standardize them, because the relative gen expression is meaningful and centering within each gene would result in only the within gene variance being used for the PCA.
 
 # Method 3: Sparse PCA with logistic regression
 
