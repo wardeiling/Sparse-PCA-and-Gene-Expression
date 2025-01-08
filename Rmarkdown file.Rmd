@@ -93,6 +93,8 @@ There does not seem to be massive variation in the standard deviations of gene e
 
 # Method 1: Hybrid step-wise Logistic regression
 
+The first approach employed hybrid stepwise logistic regression, implemented using the \texttt{MASS} package’s \texttt{stepAIC()} function. This method iteratively selects predictors by minimizing the Akaike Information Criterion (AIC) through a combination of forward selection and backward elimination \cite{hastie2009elements}. Alternatively, a more rigorous but computationally expensive strategy was also considered: removing one variable at a time and performing an analysis of deviance using differences in residual deviance to identify the least important variable to exclude \cite{hastie2009elements}. 
+
 ```{r}
 ## TRAIN / TEST DATA SPLIT
 # divide data in train/test data split (80/20%)
@@ -155,6 +157,7 @@ auc(roc_curve)
 # draw ROC curve
 plot(roc_curve, col = "blue", lwd = 2, main = "ROC curve for logistic regression model")
 ```
+
 Let's now do it with 5-fold cross-validation
 
 ```{r}
@@ -219,6 +222,8 @@ avg_auc <- mean(auc)
 ```
 
 # Method 2: Principle component analysis (PCA) with logistic regression
+
+The second approach utilized Principal Component Analysis (PCA), performed with the \texttt{stats} package’s \texttt{prcomp()} function. PCA transforms the original 6,024 predictors into orthogonal components that capture the majority of variance in the dataset. Components explaining a cumulative variance of 95\% were retained and used as predictors in logistic regression, implemented using the \texttt{glm()} function. While PCA effectively reduces dimensionality, it does not enforce sparsity, potentially limiting \textit{biological interpretability} \citep{hastie2015statistical}.
 
 ```{r}
 # remove the outcome
@@ -372,5 +377,20 @@ cross-validation." (ISLR, p. 259)
 
 # Method 3: Sparse PCA with logistic regression
 
+The third approach implemented sparse PCA, using the \texttt{elasticnet} package's \texttt{spca()} function. Sparse PCA incorporates sparsity constraints \cite{hastie2015statistical} to ensure that each component is influenced by a subset of genes, enhancing interpretability while retaining predictive power. Hyperparameters controlling sparsity, such as the number of nonzero loadings, were tuned using cross-validation. Logistic regression was then applied to the sparse principal components using the \texttt{glm()} function.
+
+let us first do it on the complete data
+
+```{r}
+library(elasticnet)
+?spca()
+
+# Fit sparse PCA models
+spca_model_pen <- spca(Data_pca, K = 2, type = "predictor", sparse = "penalty", trace = TRUE)
+spca_model_varnum <- spca(Data_pca, K = 2, type = "predictor", sparse = "varnum", trace = TRUE)
+
+```
+
+Let's now implement the 5-fold cross-validation to determine the optimal number of components and values for the tuning parameters.
 
 
