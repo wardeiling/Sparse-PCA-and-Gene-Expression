@@ -18,8 +18,6 @@ library(pROC)      # For AUC calculation and ROC curves
 library(dplyr)     # For data manipulation
 library(sparsepca) # For sparse PCA
 library(spls)      # For the Dataset
-library(doParallel) # For parallel processing
-library(foreach)    # For parallel processing
 ```
 
 # Data Pre-processing and Exploration
