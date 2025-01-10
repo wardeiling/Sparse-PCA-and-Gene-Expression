@@ -1,0 +1,717 @@
+---
+title: "Data Analysis of Prostate Cancer Data"
+author: "Floris Meijvis en co"
+date: "2024-11-22"
+output: pdf_document
+execute:
+  warning: false
+  message: false
+---
+
+Importing packages:
+
+```{r} 
+library(tidyverse) # For data manipulation and data visualization
+library(MASS)      # For stepwise logistic regression
+library(caret)     # For cross-validation
+library(pROC)      # For AUC calculation and ROC curves
+library(dplyr)     # For data manipulation
+library(sparsepca) # For sparse PCA
+library(spls)      # For the Dataset
+library(doParallel) # For parallel processing
+library(foreach)    # For parallel processing
+```
+
+# Data Pre-processing and Exploration
+
+```{r}
+# import and mutate Data
+data(prostate)
+x <- prostate$x
+y <- prostate$y
+
+Data <- data.frame(y, x) %>% 
+  # rename column y to tumor
+  rename(disease = y)
+
+# explore data
+nrow(Data) #102 samples -> 52 tumor samples, 50 normal tissue samples
+ncol(Data) #6034 genes included in data set
+all(sapply(Data, is.numeric)) # TRUE, all variables are operationalized as numeric
+head(Data, 10)
+```
+
+The prostate dataset consists of 52 prostate tumor and 50 normal samples. Normal and tumor classes are coded in 0 and 1, respectively, in $Y$ vector. Matrix $X$ is gene expression data and arrays were normalized, log transformed, and standardized to zero mean and unit variance across genes as described in Dettling (2004) and Dettling and Beuhlmann (2002). See Chung and Keles (2010) for more details.
+
+https://rdrr.io/cran/spls/man/prostate.html
+
+# Data visualization
+
+```{r}
+### making a few visualizations of the data
+
+# boxplot for possible tumor promoting gene
+Data %>%
+  mutate(disease = ifelse(disease == 0, "normal", "tumor")) %>%
+  ggplot(aes(y = X54, fill = disease)) + 
+  geom_boxplot() +
+  labs(y = "Gene expression of gen X54", title = "Expression level of gene X54 in normal vs tumor sample") +
+  theme(axis.text.x = element_blank()) + 
+  facet_wrap(vars(disease))
+
+
+# boxplot for possible tumor supressing gene
+Data %>%
+  mutate(disease = ifelse(disease == 0, "normal", "tumor")) %>%
+  ggplot(aes(y = X2022, fill = disease)) + 
+  geom_boxplot() +
+  labs(y = "Gene expression of gen X2022", title = "Expression level of gene X2022 in normal vs tumor sample") +
+  theme(axis.text.x = element_blank()) + 
+  facet_wrap(vars(disease))
+```
+
+A few quickly made observations: it seems that the tumors have less variance in the gene expressions (but this is based only on 3 plots, so could be wrong)
+
+```{r}
+# compute the average sd in gene expressions for normal and tumor samples
+normal <- Data %>% filter(disease == 0) %>% dplyr::select(-disease)
+tumor <- Data %>% filter(disease == 1) %>% dplyr::select(-disease)
+normal_sd <- apply(normal, 2, sd)
+tumor_sd <- apply(tumor, 2, sd)
+
+data_sd <- data.frame(normal = normal_sd, tumor = tumor_sd) %>%
+  pivot_longer(cols = everything(), names_to = "disease", values_to = "sd")
+
+# visualize the average sd in gene expressions for normal and tumor samples using boxplot
+ggplot(data_sd, aes(x = disease, y = sd, fill = disease)) +
+  geom_boxplot() +
+  labs(y = "Average standard deviation in gene expressions", title = "Average standard deviation in gene expressions for normal and tumor samples")
+```
+
+There does not seem to be massive variation in the standard deviations of gene expressions between normal and tumor samples. However, we do generally see that the standard deviations are lower in the tumor samples compared to the normal samples, especially since there are less high outliers for the tumor samples.
+
+# Method 1: Hybrid step-wise Logistic regression
+
+The first approach employed hybrid stepwise logistic regression, implemented using the \texttt{MASS} package’s \texttt{stepAIC()} function. This method iteratively selects predictors by minimizing the Akaike Information Criterion (AIC) through a combination of forward selection and backward elimination \cite{hastie2009elements}.
+
+Let's now do it with 5-fold cross-validation
+
+```{r}
+# Define 5-fold cross-validation
+set.seed(123)
+folds <- createFolds(Data$disease, k = 5, list = TRUE, returnTrain = TRUE)
+
+# Initialize vectors to store performance metrics
+accuracy <- c()
+sensitivity <- c()
+specificity <- c()
+ppv <- c()
+npv <- c()
+auc <- c()
+roc_curves <- list()
+
+# Perform 5-fold CV
+for (i in 1:5) {
+  # Split the data into training and validation sets
+  fold_train <- Data[folds[[i]], ]
+  fold_test <- Data[-folds[[i]], ]
+  
+  # Fit intercept and full models
+  intercept.model <- glm(disease ~ 1, family = "binomial", data = fold_train)
+  full.model <- glm(disease ~ ., family = "binomial", data = fold_train)
+  
+  # Perform stepwise logistic regression
+  step.model <- stepAIC(intercept.model, direction = "both", 
+                        scope = full.model, trace = FALSE)
+  
+  # Predict probabilities and classify on validation set
+  predictions <- predict(step.model, newdata = fold_test, type = "response")
+  pred_class <- ifelse(predictions > 0.5, 1, 0)
+  
+  # Compute confusion matrix
+  cm <- confusionMatrix(data = factor(pred_class), reference = factor(fold_test$disease))
+  
+  # Compute metrics
+  accuracy[i] <- cm$overall["Accuracy"]
+  sensitivity[i] <- cm$byClass["Sensitivity"]
+  specificity[i] <- cm$byClass["Specificity"]
+  ppv[i] <- cm$byClass["Pos Pred Value"]
+  npv[i] <- cm$byClass["Neg Pred Value"]
+  
+  # Compute AUC
+  roc_curve <- roc(factor(fold_test$disease), predictions)
+  roc_curves[[i]] <- data.frame(
+    Specificity = 1 - roc_curve$specificities,
+    Sensitivity = roc_curve$sensitivities,
+    Fold = i
+  )
+  auc[i] <- auc(roc_curve)
+}
+
+# Print the results
+cat("5-Fold Cross-Validation Results:\n")
+cat("Accuracy:", accuracy, "\n")
+cat("Sensitivity:", sensitivity, "\n")
+cat("Specificity:", specificity, "\n")
+cat("PPV:", ppv, "\n")
+cat("NPV:", npv, "\n")
+cat("AUC:", auc, "\n")
+
+# save raw results
+method1_results <- data.frame(Accuracy = accuracy,
+                      Sensitivity = sensitivity,
+                      Specificity = specificity,
+                      PPV = ppv,
+                      NPV = npv,
+                      AUC = auc)
+
+saveRDS(method1_results, "data analysis/results_method1_logreg_raw_metrics.rds")
+
+# the accuracy is between 0.375 and 0.588, which is not very good
+# either the sensitivity or specificity is 1, there is no in-between, indicating that the model
+# is either good at predicting the positive class or the negative class, but not both.
+# the AUC is consistent at 0.5, which is the same as random guessing
+
+# save average metrics
+method1_avg_results <- data.frame(Accuracy = mean(accuracy),
+                      Sensitivity = mean(sensitivity),
+                      Specificity = mean(specificity),
+                      PPV = mean(ppv),
+                      NPV = mean(npv),
+                      AUC = mean(auc))
+
+saveRDS(method1_avg_results, "data analysis/results_method1_logreg_avg_metrics.rds")
+
+# Combine all ROC curves for plotting
+roc_data <- do.call(rbind, roc_curves) %>%
+  mutate(Fold = as.factor(Fold))
+
+# Compute the average ROC curve
+average_roc <- roc_data %>%
+  group_by(Specificity) %>%
+  summarise(Sensitivity = mean(Sensitivity), .groups = "drop")
+
+# Plot ROC curves
+roc_curve_combined <- ggplot() +
+  # Individual fold ROC curves in grey
+  geom_line(data = roc_data, aes(x = Specificity, y = Sensitivity, group = Fold),
+            color = "grey", size = 0.7, alpha = 0.7) +  # Slightly thicker and more transparent lines
+  # Average ROC curve in black
+  geom_line(data = average_roc, aes(x = Specificity, y = Sensitivity),
+            color = "black", size = 1.2, linetype = "solid") +  # Thicker solid line for average curve
+  # Diagonal line (random classifier) in dashed red
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red", size = 1) +
+  # Add labels and titles
+  # title = "Method 1: Stepwise Logistic Regression",
+  labs(x = "FPR (1 - Specificity)",
+       y = "Sensitivity") +
+  # Customizing axis scales and ticks
+  scale_x_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1), 
+                     labels = seq(0, 1, by = 0.2)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1), 
+                     labels = seq(0, 1, by = 0.2)) +
+  # Customize the theme for cleaner appearance
+  theme_minimal(base_size = 15) +  # Base font size for better readability
+  theme(
+    legend.position = "none",           # Remove legend
+    panel.grid = element_blank(),       # Remove all background gridlines
+    panel.background = element_blank(), # Remove panel background
+    axis.line = element_line(color = "black"),  # Add black axis lines
+    axis.text = element_text(size = 12),  # Set font size for axis ticks
+    axis.title = element_text(size = 14),  # Increase size of axis titles
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  # Increase plot title size
+    plot.margin = margin(20, 20, 20, 20)  # Increase margins for better spacing
+  )
+
+
+roc_curve_combined
+
+# save the plot
+saveRDS(roc_curve_combined, "data analysis/results_method1_logreg_roc_curve.rds")
+ggsave("data analysis/results_method1_logreg_roc_curve.jpg", plot = roc_curve_combined,
+       width = 8, height = 8, dpi = 300)
+ggsave("data analysis/results_method1_logreg_roc_curve.png", plot = roc_curve_combined,
+       width = 8, height = 8, dpi = 300)
+```
+
+This ROC-curve (AUC = 50%) suggests that there is no sensibility (i.e., no distinct separation of negatives and positives by the model). As it is perfectly overlaying the red-line, which represents a random classifier.
+
+# Method 2: Principle component analysis (PCA) with logistic regression
+
+The second approach utilized Principal Component Analysis (PCA), performed with the \texttt{stats} package’s \texttt{prcomp()} function. PCA transforms the original 6,024 predictors into orthogonal components that capture the majority of variance in the dataset. In line with the recommendation for PC regression, the number of components was chosen by cross-validation (ISLR, p. 259). More specifically, the number of components was selected based on the  predictive performance (area under the curve (AUC)) of logistic regression models in 5-fold cross-validation. Note, While PCA effectively reduces dimensionality, it does not enforce sparsity, as it retains all original features in the transformed components \cite{hastie2015statistical}, (ISLR, p. 259). Further centering or scaling of genes was avoided to preserve sample-level variability and prevent distortion of the gene variance structure, which is critical for PCA. Array-level standardization already ensured comparable feature scales, aligning with the assumptions of sparse PCA (ISLR, p. 259). 
+
+> Make sure that existing pre-processing done to the data was already explained.
+
+Let's now implement the 5-fold cross-validation to assess what number of principal components we want to use.
+
+```{r}
+# Step 1: Set up cross-validation
+set.seed(123)
+folds <- createFolds(Data$disease, k = 5, list = TRUE)  # 5-fold CV
+
+# Step 2: Cross-validation loop with PCA on training data
+results <- data.frame(Components = numeric(),
+                      Accuracy = numeric(),
+                      Sensitivity = numeric(),
+                      Specificity = numeric(),
+                      PPV = numeric(),
+                      NPV = numeric(),
+                      AUC = numeric())
+
+roc_curves <- list() 
+
+components_to_test <- seq(2, 33)  # Test up to 33 components
+
+for (num_components in components_to_test) {
+  
+  roc_curves[[num_components]] <- list() # Create a sublist for each component count
+  
+  metrics <- data.frame(Components = numeric(),
+                      Accuracy = numeric(),
+                      Sensitivity = numeric(),
+                      Specificity = numeric(),
+                      PPV = numeric(),
+                      NPV = numeric(),
+                      AUC = numeric())
+  
+  for (i in seq_along(folds)) {
+    # Split data into training and testing folds
+    train_idx <- unlist(folds[-i])
+    test_idx <- folds[[i]]
+    train_data <- Data[train_idx, ]
+    test_data <- Data[test_idx, ]
+    
+    # Step 3: Perform PCA on training data
+    train_pca <- train_data %>% dplyr::select(-disease) %>% as.matrix()
+    test_pca <- test_data %>% dplyr::select(-disease) %>% as.matrix()
+    
+    pca_model <- prcomp(train_pca, center = FALSE, scale = FALSE)  # Fit PCA on training data
+    
+    # Step 4: Transform both training and testing data using the same PCA model 
+    train_pcs <- pca_model$x[, 1:num_components]  # Select top N components for training data
+    test_pcs <- predict(pca_model, newdata = test_pca)[, 1:num_components]  # Transform test data
+    
+    # Combine PCs with the outcome variable
+    train_df <- data.frame(disease = train_data$disease, train_pcs)
+    test_df <- data.frame(disease = test_data$disease, test_pcs)
+    
+    # Step 5: Fit logistic regression
+    model <- glm(as.factor(disease) ~ ., family = "binomial", data = train_df)
+    
+    # Step 6: Predict on the test set
+    pred_probs <- predict(model, newdata = test_df, type = "response")
+    pred_class <- ifelse(pred_probs > 0.5, 1, 0)
+    
+    # Compute confusion matrix
+    cm <- confusionMatrix(data = factor(pred_class), reference = factor(test_df$disease))
+    
+    # Compute metrics
+    accuracy <- cm$overall["Accuracy"]
+    sensitivity <- cm$byClass["Sensitivity"]
+    specificity <- cm$byClass["Specificity"]
+    ppv <- cm$byClass["Pos Pred Value"]
+    npv <- cm$byClass["Neg Pred Value"]
+    
+    # Compute AUC and save ROC curve
+    roc_obj <- roc(as.factor(test_df$disease), pred_probs)
+    auc <- auc(roc_obj)
+    
+    roc_curves[[num_components]][[i]] <- data.frame(
+      Specificity = 1 - roc_obj$specificities,
+      Sensitivity = roc_obj$sensitivities,
+      Fold = i
+    )
+    
+    # Store metrics for the fold
+    metrics <- rbind(metrics, data.frame(Accuracy = accuracy,
+                      Sensitivity = sensitivity,
+                      Specificity = specificity,
+                      PPV = ppv,
+                      NPV = npv,
+                      AUC = auc))
+  }
+  
+  # Average metrics across folds and store results
+  results <- rbind(results, data.frame(Components = num_components,
+                                       Accuracy = mean(metrics$Accuracy),
+                                       Sensitivity = mean(metrics$Sensitivity),
+                                       Specificity = mean(metrics$Sensitivity),
+                                       PPV = mean(metrics$PPV),
+                                       NPV = mean(metrics$NPV),
+                                       AUC = mean(metrics$AUC)
+                                       ))
+}
+
+# save raw metrics
+saveRDS(results, "data analysis/results_method2_pca_avg_metrics.rds")
+
+# Step 7: Find the optimal number of components based on AUC and Accuracy
+optimal_components_AUC <- results %>% 
+  filter(AUC == max(AUC)) %>% 
+  dplyr::select(Components) %>% 
+  pull()
+
+optimal_components_accuracy <- results %>% 
+  filter(Accuracy == max(Accuracy)) %>% 
+  dplyr::select(Components) %>% 
+  pull()
+
+# now filter first only components on PC smaller than or equal to 15
+optimal_components_AUC_selected <- results %>% 
+  filter(Components <= 15) %>% 
+  filter(AUC == max(AUC)) %>% 
+  dplyr::select(Components) %>% 
+  pull()
+
+optimal_components_accuracy_selected <- results %>%
+  filter(Components <= 15) %>% 
+  filter(Accuracy == max(Accuracy)) %>% 
+  dplyr::select(Components) %>% 
+  pull()
+
+# Step 8: Visualize results
+model_selection <- ggplot(results, aes(x = Components)) +
+  geom_line(aes(y = AUC, color = "AUC"), linetype = "solid", size = 1.2) +  # Line for AUC
+  geom_line(aes(y = Accuracy, color = "Accuracy"), linetype = "dashed", size = 1.2) +  # Line for Accuracy
+  # title = "5-Fold Cross-Validation: AUC and Accuracy vs. Principal Components"
+  labs(x = "Number of Principal Components",
+       y = "Metric",
+       color = "Metric") +  # Color legend
+  scale_color_manual(values = c("AUC" = "blue", "Accuracy" = "red")) +
+  theme_minimal(base_size = 14) +  # Larger text size
+  theme(legend.position = "top",  # Move legend to top
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 14, face = "bold"),
+        axis.text = element_text(size = 12)) +
+  theme(panel.grid.major = element_line(color = "gray", size = 0.5),  # Subtle grid lines
+        panel.grid.minor = element_blank())  # Remove minor grid lines
+
+print(model_selection)
+
+ggsave("data analysis/results_method2_pca_model_selection.jpg", plot = model_selection,
+       width = 8, height = 8, dpi = 300)
+ggsave("data analysis/results_method2_pca_model_selection.png", plot = model_selection,
+       width = 8, height = 8, dpi = 300)
+
+# save model selection plot
+saveRDS(model_selection, "data analysis/results_method2_pca_model_selection.rds")
+
+# Print optimal number of components
+cat("Optimal number of components based on AUC:", optimal_components_AUC, "\n")
+cat("Optimal number of components based on Accuracy:", optimal_components_accuracy, "\n")
+cat("Optimal number of components based on AUC (under 15 PC):", optimal_components_AUC_selected, "\n")
+cat("Optimal number of components based on Accuracy (under 15 PC):", optimal_components_accuracy_selected, "\n")
+
+# Optional: Combine ROC curves for plotting
+all_roc_data <- do.call(rbind, lapply(components_to_test, function(comp) {
+  do.call(rbind, lapply(seq_along(roc_curves[[comp]]), function(fold) {
+    data <- roc_curves[[comp]][[fold]]
+    data$Components <- comp
+    data
+  }))
+}))
+
+### Continue with 8 Principal Components
+
+# display metrics
+results %>% filter(Components == 8)
+
+# Plot ROC curves for a chosen number of components
+chosen_components <- 8
+roc_to_plot <- do.call(rbind, roc_curves[[chosen_components]])
+
+average_roc <- roc_to_plot %>%
+  group_by(Specificity) %>%
+  summarise(Sensitivity = mean(Sensitivity), .groups = "drop")
+
+# Plot the ROC curves
+roc_curve_combined <- ggplot() +
+  # Individual fold ROC curves in grey
+  geom_line(data = roc_to_plot, aes(x = Specificity, y = Sensitivity, group = Fold),
+            color = "grey", size = 0.7, alpha = 0.7) +  # Slightly thicker and more transparent lines
+  # Average ROC curve in black
+  geom_line(data = average_roc, aes(x = Specificity, y = Sensitivity),
+            color = "black", size = 1.2, linetype = "solid") +  # Thicker solid line for average curve
+  # Diagonal line (random classifier) in dashed red
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red", size = 1) +
+  # Add labels and titles
+  # title = paste("Method 2: PCA with Logistic Regression (k =", chosen_components, ")"),
+  labs(x = "FPR (1 - Specificity)",
+       y = "Sensitivity") +
+  # Customizing axis scales and ticks
+  scale_x_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1), 
+                     labels = seq(0, 1, by = 0.2)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1), 
+                     labels = seq(0, 1, by = 0.2)) +
+  # Customize the theme for cleaner appearance
+  theme_minimal(base_size = 15) +  # Base font size for better readability
+  theme(
+    legend.position = "none",           # Remove legend
+    panel.grid = element_blank(),       # Remove all background gridlines
+    panel.background = element_blank(), # Remove panel background
+    axis.line = element_line(color = "black"),  # Add black axis lines
+    axis.text = element_text(size = 12),  # Set font size for axis ticks
+    axis.title = element_text(size = 14),  # Increase size of axis titles
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  # Increase plot title size
+    plot.margin = margin(20, 20, 20, 20)  # Increase margins for better spacing
+  )
+
+roc_curve_combined
+
+# Save the plot
+saveRDS(roc_curve_combined, "data analysis/results_method2_pca_roc_curve.rds")
+ggsave("data analysis/results_method2_pca_roc_curve.jpg", plot = roc_curve_combined,
+       width = 8, height = 8, dpi = 300)
+ggsave("data analysis/results_method2_pca_roc_curve.png", plot = roc_curve_combined,
+       width = 8, height = 8, dpi = 300)
+```
+
+The glm algorithm did not converge very often. Since classes are not completely balanced, we continue with AUC as metric for deciding the number of components. Based on this, we would continue with 8 components instead of the 29, since a number of components of the latter, would make interpretation difficult and parsimony lacking.
+
+The ROC curve shows good separation of negatives and positives by the model. However, the small size of the test set (n = 20) may have caused the jaggedness of the curve, which may imply that the model is overfitting to the noise in the training data.
+
+# Method 3: Sparse PCA with logistic regression
+
+The third approach implemented sparse PCA, using the \texttt{sparsepca} package's \texttt{rspca()} function (Erichson et al., 2020). Sparse PCA incorporates a sparsity inducing regularizer \cite{hastie2015statistical}---the LASSO penalty---to ensure that each component is influenced by a subset of genes, thereby avoiding overfitting and enhancing interpretability (Erichson et al., 2020). Hyperparameters controlling sparsity, such as the number of nonzero loadings, were tuned using cross-validation. Logistic regression was then applied to the sparse principal components using the \texttt{glm()} function.
+
+Footnote: PCA can be seen as a ridge regression problem, and sparse PCA as an elastic-net regression problem through the introduction of the lasso penalty (Zou et al., 2006).
+
+While sparse PCA can be conducted with the spca() function of the elasticnet package (Zou et al., 2006), a more recent implementation is available in the sparsepca package (Erichson et al., 2020). The sparsepca package employs variable projection and offers an accelerated version of sparse PCA with an alpha parameter than controls the sparsity and a beta parameter than determines the amount of ridge shrinkage. This accelerated function rspca() is useful, as it dramatically reduces the computational time for a comprehensive grid search of hyperparameters.
+
+Zou, H., Hastie, T., & Tibshirani, R. (2006). Sparse Principal Component Analysis. Journal of Computational and Graphical Statistics, 15(2), 265–286. https://doi.org/10.1198/106186006X113430
+
+Erichson, N. B., Zheng, P., Manohar, K., Brunton, S. L., Kutz, J. N., & Aravkin, A. Y. (2020). Sparse Principal Component Analysis via Variable Projection. SIAM Journal on Applied Mathematics, 80(2), 977–1002. https://doi.org/10.1137/18M1211350
+
+let us first do it on the complete data
+
+```{r}
+# Fit sparse PCA models
+spca_model <- sparsepca::spca(Data_pca, k = 2, alpha = 1e-04, beta = 1e-04, center = FALSE, 
+                              scale = FALSE, max_iter = 1000, tol = 1e-05, verbose = TRUE)
+
+summary(spca_model)
+spca_model$scores
+
+# Or an accelerated implementation
+spca_model_acc <- sparsepca::rspca(Data_pca, k = 2, alpha = 1e-04, beta = 1e-04, center = FALSE, 
+                              scale = FALSE, max_iter = 1000, tol = 1e-05, verbose = TRUE)
+```
+
+Let's now implement the 5-fold cross-validation with a grid search for the hyperparameters (alpha and beta) as well as for the number of principal components.
+
+```{r}
+# Define hyperparameter grid to perform "grid search"
+k_values <- seq(2, 33)  # Number of components to test
+alpha_values <- c(1e-04, 1e-03, 1e-02, 1e-01)  # Sparsity penalty
+beta_values <- c(1e-04, 1e-03, 1e-02, 1e-01)   # Variance penalty
+# Thus, we have 4 * 4 * 10 = 160 combinations to test
+
+# set seed for reproducibility
+set.seed(123)
+
+# create 5-fold cross-validation
+folds <- createFolds(Data$disease, k = 5, list = TRUE)  # 5-fold CV
+
+# initialize results data frame
+results <- data.frame(K = numeric(), 
+                      Alpha = numeric(), 
+                      Beta = numeric(),
+                      Fold = numeric(),
+                      Accuracy = numeric(),
+                      Sensitivity = numeric(),
+                      Specificity = numeric(),
+                      PPV = numeric(),
+                      NPV = numeric(),
+                      AUC = numeric())
+
+# List to store ROC data
+roc_curves <- list()
+
+for (i in seq_along(folds)) {
+  # Split data into training and testing folds
+  train_idx <- unlist(folds[-i])
+  test_idx <- folds[[i]]
+  train_data <- Data[train_idx, ]
+  test_data <- Data[test_idx, ]
+  
+  train_pca <- train_data %>% dplyr::select(-disease) %>% as.matrix()
+  test_pca <- test_data %>% dplyr::select(-disease) %>% as.matrix()
+  
+  # Grid search for k, alpha, and beta
+  for (k in k_values) {
+    for (alpha in alpha_values) {
+      for (beta in beta_values) {
+        
+        # display updater for the user
+        cat("Fold", i, "of 5\n")
+        cat("Fitting model with k =", k, ", alpha =", alpha, ", beta =", beta, "\n")
+        
+        # Fit SPCA with current hyperparameters
+        spca_model <- sparsepca::rspca(train_pca, k = k,
+                                      alpha = alpha, beta = beta,
+                                      center = FALSE, scale = FALSE,
+                                      verbose = FALSE)
+        
+        # Transform both training and testing data
+        train_pcs <- spca_model$scores
+        
+        # Get the loadings from the trained sparse PCA model
+        loadings <- spca_model$loadings  # (p, k)
+        
+        # Center the test data based on the training data's mean (as SPCA is centering based)
+        test_pca_centered <- sweep(test_pca, 2, colMeans(train_pca), FUN = "-")
+        
+        # Project test data onto the sparse principal components (using the loadings)
+        test_pcs <- test_pca_centered %*% loadings  # (n, k)
+        
+        # Combine PCs with the outcome variable
+        train_df <- data.frame(disease = train_data$disease, train_pcs)
+        test_df <- data.frame(disease = test_data$disease, test_pcs)
+        
+        # Fit logistic regression
+        model <- glm(as.factor(disease) ~ ., family = "binomial", data = train_df)
+        
+        # Predict on the test set
+        pred_probs <- predict(model, newdata = test_df, type = "response")
+        pred_class <- ifelse(pred_probs > 0.5, 1, 0)
+        
+        # Calculate metrics
+        cm <- confusionMatrix(data = factor(pred_class), reference = factor(test_df$disease))
+        accuracy <- cm$overall["Accuracy"]
+        sensitivity <- cm$byClass["Sensitivity"]
+        specificity <- cm$byClass["Specificity"]
+        ppv <- cm$byClass["Pos Pred Value"]
+        npv <- cm$byClass["Neg Pred Value"]
+        roc_obj <- roc(as.factor(test_df$disease), pred_probs)
+        auc <- roc_obj$auc
+        
+        # Store ROC curve data in the list for later reconstruction
+        roc_curve_data <- data.frame(
+          Specificity = 1 - roc_obj$specificities,
+          Sensitivity = roc_obj$sensitivities,
+          Fold = i, 
+          K = k, 
+          Alpha = alpha, 
+          Beta = beta
+        )
+        
+        # Save ROC curve data for the current combination
+        roc_curves[[paste(k, alpha, beta, sep = "_")]] <- rbind(roc_curves[[paste(k, alpha, beta, sep = "_")]], roc_curve_data)
+        
+        # Store results
+        results <- rbind(results, data.frame(K = k, Alpha = alpha, Beta = beta, Fold = i, 
+                                             Accuracy = accuracy, Sensitivity = sensitivity,
+                                             Specificity = specificity, PPV = ppv, NPV = npv, AUC = auc))
+      }
+    }
+  }
+}
+
+# save results to rds
+saveRDS(results, "data analysis/results_method3_spca_grid_raw_metrics.rds")
+saveRDS(roc_curves, "data analysis/results_method3_spca_grid_roc_curve_data.rds")
+```
+
+Let's assess the results
+
+```{r}
+results <- readRDS("data analysis/results_method3_spca_grid_raw_metrics.rds")
+roc_curves <- readRDS("data analysis/results_method3_spca_grid_roc_curve_data.rds")
+### Metric Results
+
+# average metrics over folds
+avg_results <- results %>%
+  group_by(K, Alpha, Beta) %>%
+  summarise(Accuracy = mean(Accuracy),
+            Sensitivity = mean(Sensitivity),
+            Specificity = mean(Specificity),
+            PPV = mean(PPV),
+            NPV = mean(NPV),
+            AUC = mean(AUC),
+            .groups = "drop")
+
+# Find the optimal number of components based on AUC and Accuracy
+best_AUC <- results[which.max(results$AUC), ]
+print(best_AUC) # K = 7,	Alpha = 1e-04, Beta =	1e-04,	Accuracy = 0.950, AUC =	1.000
+best_accuracy <- results[which.max(results$Accuracy), ]
+print(best_accuracy) # K = 11,	Alpha = 1e-04, Beta =	0.001, Accuracy = 0.952, AUC = 0.898
+
+### Visualize results
+
+# Create a line plot for AUC and accuracy as a function of the number of components
+model_selection <- ggplot(results, aes(x = K)) +
+  geom_line(aes(y = AUC, color = "AUC")) +
+  geom_line(aes(y = Accuracy, color = "Accuracy")) +
+  # title = "5-Fold Cross-Validation Results",
+  labs(x = "Number of Principal Components",
+       y = "Metric") +
+  scale_color_manual(values = c("AUC" = "blue", "Accuracy" = "red")) +
+  theme_minimal()
+
+# Save the plot
+saveRDS(model_selection, "data analysis/results_method3_spca_grid_model_selection.rds")
+ggsave("data analysis/results_method3_spca_grid_model_selection.jpg", plot = model_selection,
+       width = 8, height = 8, dpi = 300)
+ggsave("data analysis/results_method3_spca_grid_model_selection.png", plot = model_selection,
+       width = 8, height = 8, dpi = 300)
+
+### make ROC plot
+
+# Selecting a specific number of components and hyperparameter values
+# selected_k <- 9      # Number of components
+# selected_alpha <- 1e-04  # Alpha value
+# selected_beta <- 1e-04   # Beta value
+
+# Filter the roc_data for the chosen hyperparameters (k, alpha, beta)
+roc_data_selected <- roc_curves[[paste(selected_k, selected_alpha, selected_beta, sep = "_")]]
+
+# compute average ROC
+average_roc <- roc_data_selected %>%
+  group_by(Specificity) %>%
+  summarise(Sensitivity = mean(Sensitivity), .groups = "drop")
+
+# Plot the ROC curves
+roc_curve_combined <- ggplot() +
+  # Individual fold ROC curves in grey
+  geom_line(data = roc_data_selected, aes(x = Specificity, y = Sensitivity, group = Fold),
+            color = "grey", size = 0.7, alpha = 0.7) +  # Slightly thicker and more transparent lines
+  # Average ROC curve in black
+  geom_line(data = average_roc, aes(x = Specificity, y = Sensitivity),
+            color = "black", size = 1.2, linetype = "solid") +  # Thicker solid line for average curve
+  # Diagonal line (random classifier) in dashed red
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red", size = 1) +
+  # Add labels and titles
+  # title = paste("Sparse PCA with Logistic Regression (k =", selected_k, 
+                     # ", a =", selected_alpha, ", b =", selected_beta, ")"),
+  labs(x = "FPR (1 - Specificity)",
+       y = "Sensitivity") +
+  # Customizing axis scales and ticks
+  scale_x_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1), 
+                     labels = seq(0, 1, by = 0.2)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1), 
+                     labels = seq(0, 1, by = 0.2)) +
+  # Customize the theme for cleaner appearance
+  theme_minimal(base_size = 15) +  # Base font size for better readability
+  theme(
+    legend.position = "none",           # Remove legend
+    panel.grid = element_blank(),       # Remove all background gridlines
+    panel.background = element_blank(), # Remove panel background
+    axis.line = element_line(color = "black"),  # Add black axis lines
+    axis.text = element_text(size = 12),  # Set font size for axis ticks
+    axis.title = element_text(size = 14),  # Increase size of axis titles
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  # Increase plot title size
+    plot.margin = margin(20, 20, 20, 20)  # Increase margins for better spacing
+  )
+
+roc_curve_combined
+
+# Save the plot
+saveRDS(roc_curve_combined, "data analysis/results_method3_spca_grid_roc_curve")
+ggsave("data analysis/results_method3_spca_grid_roc_curve.jpg", plot = roc_curve_combined,
+       width = 8, height = 8, dpi = 300)
+ggsave("data analysis/results_method3_spca_grid_roc_curve.png", plot = roc_curve_combined,
+       width = 8, height = 8, dpi = 300)
+```
+
