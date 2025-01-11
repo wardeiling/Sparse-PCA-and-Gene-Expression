@@ -1,6 +1,6 @@
 ---
-title: "Data Analysis of Prostate Cancer Data"
-author: "Floris Meijvis en co"
+title: "Comparing Prediction models of Prostate Cancer Data"
+author: "Floris Meijvis and Ward Eiling"
 date: "2024-11-22"
 output: pdf_document
 execute:
@@ -482,26 +482,13 @@ Zou, H., Hastie, T., & Tibshirani, R. (2006). Sparse Principal Component Analysi
 
 Erichson, N. B., Zheng, P., Manohar, K., Brunton, S. L., Kutz, J. N., & Aravkin, A. Y. (2020). Sparse Principal Component Analysis via Variable Projection. SIAM Journal on Applied Mathematics, 80(2), 977–1002. https://doi.org/10.1137/18M1211350
 
-let us first do it on the complete data
-
-```{r}
-# Fit sparse PCA models
-spca_model <- sparsepca::spca(Data_pca, k = 2, alpha = 1e-04, beta = 1e-04, center = FALSE, 
-                              scale = FALSE, max_iter = 1000, tol = 1e-05, verbose = TRUE)
-
-summary(spca_model)
-spca_model$scores
-
-# Or an accelerated implementation
-spca_model_acc <- sparsepca::rspca(Data_pca, k = 2, alpha = 1e-04, beta = 1e-04, center = FALSE, 
-                              scale = FALSE, max_iter = 1000, tol = 1e-05, verbose = TRUE)
-```
-
 Let's now implement the 5-fold cross-validation with a grid search for the hyperparameters (alpha and beta) as well as for the number of principal components.
 
 ```{r}
+#| echo: false
 # Define hyperparameter grid to perform "grid search"
-k_values <- seq(2, 33)  # Number of components to test
+# k_values <- seq(2, 15)  # Number of components to test, run 1
+k_values <- seq(16, 33)  # Number of components to test, run 2
 alpha_values <- c(1e-04, 1e-03, 1e-02, 1e-01)  # Sparsity penalty
 beta_values <- c(1e-04, 1e-03, 1e-02, 1e-01)   # Variance penalty
 # Thus, we have 4 * 4 * 10 = 160 combinations to test
@@ -612,12 +599,127 @@ saveRDS(results, "data analysis/results_method3_spca_grid_raw_metrics.rds")
 saveRDS(roc_curves, "data analysis/results_method3_spca_grid_roc_curve_data.rds")
 ```
 
-Let's assess the results
+Two different grid searches were run to complete the entire grid search. The first grid search was run for 2 to 15 components, while the second grid search was run for 16 to 33 components. This was done to reduce the computational time for the grid search. The results of the grid search are saved in the results_method3_spca_grid_raw_metrics.rds file.
 
 ```{r}
+#| echo: false
+
+# Load the results
+results_1 <- readRDS("data analysis/results_method3_spca_grid_raw_metrics_k1-15.rds")
+results_2 <- readRDS("data analysis/results_method3_spca_grid_raw_metrics_k16-33.rds")
+roc_curves_1 <- readRDS("data analysis/results_method3_spca_grid_roc_curve_data_k1-15.rds")
+roc_curves_2 <- readRDS("data analysis/results_method3_spca_grid_roc_curve_data_k16-33.rds")
+
+# combine results
+results <- rbind(results_1, results_2)
+roc_curves <- c(roc_curves_1, roc_curves_2)
+
+# save combined results
+saveRDS(results, "data analysis/results_method3_spca_grid_raw_metrics.rds")
+saveRDS(roc_curves, "data analysis/results_method3_spca_grid_roc_curve_data.rds")
+```
+
+Let's assess the results; first let us check which setting was optimal based on AUC.
+
+```{r}
+# Load the results
 results <- readRDS("data analysis/results_method3_spca_grid_raw_metrics.rds")
-roc_curves <- readRDS("data analysis/results_method3_spca_grid_roc_curve_data.rds")
+
+# Create a line plot for AUC and accuracy as a function of the number of components for each different combination of alpha and beta
+
+# create new string variable from Alpha and Beta with "Alpha = ..." and "Beta = ..."
+results <- results %>%
+  # make sure levels are correctly ordered
+  mutate(Alpha2 = factor(paste("Alpha =", Alpha), levels = c("Alpha = 1e-04", "Alpha = 0.001", "Alpha = 0.01", "Alpha = 0.1")),
+         Beta2 = factor(paste("Beta =", Beta), levels = c("Beta = 1e-04", "Beta = 0.001", "Beta = 0.01", "Beta = 0.1")))
+
+model_selection <- ggplot(results, aes(x = K)) +
+  geom_line(aes(y = AUC, color = "AUC")) +
+  geom_line(aes(y = Accuracy, color = "Accuracy")) +
+  # title = "5-Fold Cross-Validation Results",
+  labs(x = "Number of Principal Components",
+       y = "AUC") +
+  scale_color_manual(values = c("AUC" = "blue", "Accuracy" = "red")) +
+  theme_minimal() + 
+  facet_grid(Alpha2 ~ Beta2) +
+  theme(
+      axis.text.x = element_text(size = 12, vjust = -0.8),  # Increase font size of x-axis category labels
+      axis.text.y = element_text(size = 12),
+      axis.title.x = element_text(size = 14, vjust = -1.4),  # Increase font size of x-axis label
+      axis.title.y = element_text(size = 14),  # Increase font size of y-axis label
+      legend.position = "none",   # Remove legend
+      panel.border = element_rect(colour = "black", fill = NA, size = 1),  # Add black border
+      plot.margin = margin(5, 5, 12, 5),  # Add space around the plot
+      panel.background = element_rect(fill = "white"),  # White background instead of light grey
+      panel.grid.major = element_blank(),  # Remove major gridlines
+      panel.grid.minor = element_blank(),  # Remove minor gridlines
+      axis.line = element_line(colour = "black"),  # Black axis lines
+      axis.ticks = element_line(size = 1, color = "black"), # Black ticks
+      strip.text.x = element_text(face = "bold", color = "white", size = 12),
+      strip.text.y = element_text(face = "bold", color = "white", size = 12),
+      strip.background.x = element_rect(fill = "dodgerblue3", linetype = "solid",
+                                          color = "black", linewidth = 1),
+      strip.background.y = element_rect(fill = "firebrick2", linetype = "solid",
+                                          color = "gray30", linewidth = 1)
+  )
+
+model_selection
+
+# Save the plot
+saveRDS(model_selection, "data analysis/results_method3_spca_grid_model_selection.rds")
+ggsave("data analysis/results_method3_spca_grid_model_selection.jpg", plot = model_selection,
+       width = 8, height = 8, dpi = 300)
+ggsave("data analysis/results_method3_spca_grid_model_selection.png", plot = model_selection,
+       width = 8, height = 8, dpi = 300)
+
+model_selection_AUC <- ggplot(results, aes(x = K)) +
+  geom_line(aes(y = AUC)) +
+  # geom_line(aes(y = Accuracy, color = "Accuracy")) +
+  # title = "5-Fold Cross-Validation Results",
+  labs(x = "Number of Principal Components",
+       y = "AUC") +
+  # scale_color_manual(values = c("AUC" = "blue", "Accuracy" = "red")) +
+  theme_minimal() + 
+  facet_grid(Alpha2 ~ Beta2) +
+  theme(
+      axis.text.x = element_text(size = 12, vjust = -0.8),  # Increase font size of x-axis category labels
+      axis.text.y = element_text(size = 12),
+      axis.title.x = element_text(size = 14, vjust = -1.4),  # Increase font size of x-axis label
+      axis.title.y = element_text(size = 14),  # Increase font size of y-axis label
+      legend.position = "none",   # Remove legend
+      panel.border = element_rect(colour = "black", fill = NA, size = 1),  # Add black border
+      plot.margin = margin(5, 5, 12, 5),  # Add space around the plot
+      panel.background = element_rect(fill = "white"),  # White background instead of light grey
+      panel.grid.major = element_blank(),  # Remove major gridlines
+      panel.grid.minor = element_blank(),  # Remove minor gridlines
+      axis.line = element_line(colour = "black"),  # Black axis lines
+      axis.ticks = element_line(size = 1, color = "black"), # Black ticks
+      strip.text.x = element_text(face = "bold", color = "white", size = 12),
+      strip.text.y = element_text(face = "bold", color = "white", size = 12),
+      strip.background.x = element_rect(fill = "dodgerblue3", linetype = "solid",
+                                          color = "black", linewidth = 1),
+      strip.background.y = element_rect(fill = "firebrick2", linetype = "solid",
+                                          color = "gray30", linewidth = 1)
+  )
+  
+
+model_selection_AUC
+
+# Save the plot
+saveRDS(model_selection_AUC, "data analysis/results_method3_spca_grid_model_selection_onlyAUC.rds")
+ggsave("data analysis/results_method3_spca_grid_model_selection_onlyAUC.jpg", plot = model_selection_AUC,
+       width = 8, height = 8, dpi = 300)
+ggsave("data analysis/results_method3_spca_grid_model_selection_onlyAUC.png", plot = model_selection_AUC,
+       width = 8, height = 8, dpi = 300)
+```
+
+I prefer the AUC only plot, as it is much easier to understand. The AUC plot shows generally shows a flatline for alpha 0.1 and strange behaviour for alpha 0.01. The beta value is much less influential on the AUC compared to the alpha value. We can clearly see that the greater values of alpha (e.g., 0.001) do not necessarily prefer the more parsimonious models with less components. On the other hand, for alpha 0.0001, the AUC is generally higher for models with fewer components, peaking out at around 10. This is a clear indication that the model is overfitting with more components.
+
+```{r}
 ### Metric Results
+
+# Load the results
+results <- readRDS("data analysis/results_method3_spca_grid_raw_metrics.rds")
 
 # average metrics over folds
 avg_results <- results %>%
@@ -630,37 +732,25 @@ avg_results <- results %>%
             AUC = mean(AUC),
             .groups = "drop")
 
-# Find the optimal number of components based on AUC and Accuracy
-best_AUC <- results[which.max(results$AUC), ]
-print(best_AUC) # K = 7,	Alpha = 1e-04, Beta =	1e-04,	Accuracy = 0.950, AUC =	1.000
-best_accuracy <- results[which.max(results$Accuracy), ]
-print(best_accuracy) # K = 11,	Alpha = 1e-04, Beta =	0.001, Accuracy = 0.952, AUC = 0.898
+# Find the optimal number of components based on AUC
+(best_AUC <- avg_results[which.max(avg_results$AUC), ])
+# K = 8,	Alpha = 1e-04, Beta =	0.1
+```
 
-### Visualize results
+The optimal number of components based on AUC averaged across folds is 8, with an alpha value of 1e-04 and a beta value of 0.1. For this combination, the average AUC is 0.9588497, which is the highest among all tested combinations. The accuracy is 0.7542857, sensitivity is 0.8583333, specificity is 0.6976923, PPV is 0.7425641, and NPV is 0.8839286.
 
-# Create a line plot for AUC and accuracy as a function of the number of components
-model_selection <- ggplot(results, aes(x = K)) +
-  geom_line(aes(y = AUC, color = "AUC")) +
-  geom_line(aes(y = Accuracy, color = "Accuracy")) +
-  # title = "5-Fold Cross-Validation Results",
-  labs(x = "Number of Principal Components",
-       y = "Metric") +
-  scale_color_manual(values = c("AUC" = "blue", "Accuracy" = "red")) +
-  theme_minimal()
+Let us now visualize this with a ROC plot of this optimal combination
 
-# Save the plot
-saveRDS(model_selection, "data analysis/results_method3_spca_grid_model_selection.rds")
-ggsave("data analysis/results_method3_spca_grid_model_selection.jpg", plot = model_selection,
-       width = 8, height = 8, dpi = 300)
-ggsave("data analysis/results_method3_spca_grid_model_selection.png", plot = model_selection,
-       width = 8, height = 8, dpi = 300)
-
+```{r}
 ### make ROC plot
 
+# load the roc curves
+roc_curves <- readRDS("data analysis/results_method3_spca_grid_roc_curve_data.rds")
+
 # Selecting a specific number of components and hyperparameter values
-# selected_k <- 9      # Number of components
-# selected_alpha <- 1e-04  # Alpha value
-# selected_beta <- 1e-04   # Beta value
+selected_k <- 8      # Number of components
+selected_alpha <- 1e-04  # Alpha value
+selected_beta <- 0.1   # Beta value
 
 # Filter the roc_data for the chosen hyperparameters (k, alpha, beta)
 roc_data_selected <- roc_curves[[paste(selected_k, selected_alpha, selected_beta, sep = "_")]]
