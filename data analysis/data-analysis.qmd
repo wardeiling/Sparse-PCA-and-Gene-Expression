@@ -18,6 +18,7 @@ library(pROC)      # For AUC calculation and ROC curves
 library(dplyr)     # For data manipulation
 library(sparsepca) # For sparse PCA
 library(spls)      # For the Dataset
+library(here)      # Fixing file paths
 ```
 
 # Data Pre-processing and Exploration
@@ -163,7 +164,7 @@ method1_results <- data.frame(Accuracy = accuracy,
                       NPV = npv,
                       AUC = auc)
 
-saveRDS(method1_results, "data analysis/results_method1_logreg_raw_metrics.rds")
+saveRDS(method1_results, here("data analysis/results_method1_logreg_raw_metrics.rds"))
 
 # the accuracy is between 0.375 and 0.588, which is not very good
 # either the sensitivity or specificity is 1, there is no in-between, indicating that the model
@@ -178,7 +179,7 @@ method1_avg_results <- data.frame(Accuracy = mean(accuracy),
                       NPV = mean(npv),
                       AUC = mean(auc))
 
-saveRDS(method1_avg_results, "data analysis/results_method1_logreg_avg_metrics.rds")
+saveRDS(method1_avg_results, here("data analysis/results_method1_logreg_avg_metrics.rds"))
 
 # Combine all ROC curves for plotting
 roc_data <- do.call(rbind, roc_curves) %>%
@@ -225,10 +226,10 @@ roc_curve_combined <- ggplot() +
 roc_curve_combined
 
 # save the plot
-saveRDS(roc_curve_combined, "data analysis/results_method1_logreg_roc_curve.rds")
-ggsave("data analysis/results_method1_logreg_roc_curve.jpg", plot = roc_curve_combined,
+saveRDS(roc_curve_combined, here("data analysis/results_method1_logreg_roc_curve.rds"))
+ggsave(here("data analysis/results_method1_logreg_roc_curve.jpg"), plot = roc_curve_combined,
        width = 8, height = 8, dpi = 300)
-ggsave("data analysis/results_method1_logreg_roc_curve.png", plot = roc_curve_combined,
+ggsave(here("data analysis/results_method1_logreg_roc_curve.png"), plot = roc_curve_combined,
        width = 8, height = 8, dpi = 300)
 ```
 
@@ -341,7 +342,7 @@ for (num_components in components_to_test) {
 }
 
 # save raw metrics
-saveRDS(results, "data analysis/results_method2_pca_avg_metrics.rds")
+saveRDS(results, here("data analysis/results_method2_pca_avg_metrics.rds"))
 
 # Step 7: Find the optimal number of components based on AUC and Accuracy
 optimal_components_AUC <- results %>% 
@@ -388,13 +389,13 @@ model_selection <- ggplot(results, aes(x = Components)) +
 
 print(model_selection)
 
-ggsave("data analysis/results_method2_pca_model_selection.jpg", plot = model_selection,
+ggsave(here("data analysis/results_method2_pca_model_selection.jpg"), plot = model_selection,
        width = 8, height = 8, dpi = 300)
-ggsave("data analysis/results_method2_pca_model_selection.png", plot = model_selection,
+ggsave(here("data analysis/results_method2_pca_model_selection.png"), plot = model_selection,
        width = 8, height = 8, dpi = 300)
 
 # save model selection plot
-saveRDS(model_selection, "data analysis/results_method2_pca_model_selection.rds")
+saveRDS(model_selection, here("data analysis/results_method2_pca_model_selection.rds"))
 
 # Print optimal number of components
 cat("Optimal number of components based on AUC:", optimal_components_AUC, "\n")
@@ -459,10 +460,10 @@ roc_curve_combined <- ggplot() +
 roc_curve_combined
 
 # Save the plot
-saveRDS(roc_curve_combined, "data analysis/results_method2_pca_roc_curve.rds")
-ggsave("data analysis/results_method2_pca_roc_curve.jpg", plot = roc_curve_combined,
+saveRDS(roc_curve_combined, here("data analysis/results_method2_pca_roc_curve.rds"))
+ggsave(here("data analysis/results_method2_pca_roc_curve.jpg"), plot = roc_curve_combined,
        width = 8, height = 8, dpi = 300)
-ggsave("data analysis/results_method2_pca_roc_curve.png", plot = roc_curve_combined,
+ggsave(here("data analysis/results_method2_pca_roc_curve.png"), plot = roc_curve_combined,
        width = 8, height = 8, dpi = 300)
 ```
 
@@ -595,8 +596,8 @@ for (i in seq_along(folds)) {
 }
 
 # save results to rds
-saveRDS(results, "data analysis/results_method3_spca_grid_raw_metrics.rds")
-saveRDS(roc_curves, "data analysis/results_method3_spca_grid_roc_curve_data.rds")
+saveRDS(results, here("data analysis/results_method3_spca_grid_raw_metrics.rds"))
+saveRDS(roc_curves, here("data analysis/results_method3_spca_grid_roc_curve_data.rds"))
 ```
 
 Two different grid searches were run to complete the entire grid search. The first grid search was run for 2 to 15 components, while the second grid search was run for 16 to 33 components. This was done to reduce the computational time for the grid search. The results of the grid search are saved in the results_method3_spca_grid_raw_metrics.rds file.
@@ -605,25 +606,25 @@ Two different grid searches were run to complete the entire grid search. The fir
 #| echo: false
 
 # Load the results
-results_1 <- readRDS("data analysis/results_method3_spca_grid_raw_metrics_k1-15.rds")
-results_2 <- readRDS("data analysis/results_method3_spca_grid_raw_metrics_k16-33.rds")
-roc_curves_1 <- readRDS("data analysis/results_method3_spca_grid_roc_curve_data_k1-15.rds")
-roc_curves_2 <- readRDS("data analysis/results_method3_spca_grid_roc_curve_data_k16-33.rds")
+results_1 <- readRDS(here("data analysis/results_method3_spca_grid_raw_metrics_k1-15.rds"))
+results_2 <- readRDS(here("data analysis/results_method3_spca_grid_raw_metrics_k16-33.rds"))
+roc_curves_1 <- readRDS(here("data analysis/results_method3_spca_grid_roc_curve_data_k1-15.rds"))
+roc_curves_2 <- readRDS(here("data analysis/results_method3_spca_grid_roc_curve_data_k16-33.rds"))
 
 # combine results
 results <- rbind(results_1, results_2)
 roc_curves <- c(roc_curves_1, roc_curves_2)
 
 # save combined results
-saveRDS(results, "data analysis/results_method3_spca_grid_raw_metrics.rds")
-saveRDS(roc_curves, "data analysis/results_method3_spca_grid_roc_curve_data.rds")
+saveRDS(results, here("data analysis/results_method3_spca_grid_raw_metrics.rds"))
+saveRDS(roc_curves, here("data analysis/results_method3_spca_grid_roc_curve_data.rds"))
 ```
 
 Let's assess the results; first let us check which setting was optimal based on AUC.
 
 ```{r}
 # Load the results
-results <- readRDS("data analysis/results_method3_spca_grid_raw_metrics.rds")
+results <- readRDS(here("data analysis/results_method3_spca_grid_raw_metrics.rds"))
 
 # Create a line plot for AUC and accuracy as a function of the number of components for each different combination of alpha and beta
 
@@ -666,10 +667,10 @@ model_selection <- ggplot(results, aes(x = K)) +
 model_selection
 
 # Save the plot
-saveRDS(model_selection, "data analysis/results_method3_spca_grid_model_selection.rds")
-ggsave("data analysis/results_method3_spca_grid_model_selection.jpg", plot = model_selection,
+saveRDS(model_selection, here("data analysis/results_method3_spca_grid_model_selection.rds"))
+ggsave(here("data analysis/results_method3_spca_grid_model_selection.jpg"), plot = model_selection,
        width = 8, height = 8, dpi = 300)
-ggsave("data analysis/results_method3_spca_grid_model_selection.png", plot = model_selection,
+ggsave(here("data analysis/results_method3_spca_grid_model_selection.png"), plot = model_selection,
        width = 8, height = 8, dpi = 300)
 
 model_selection_AUC <- ggplot(results, aes(x = K)) +
@@ -706,10 +707,10 @@ model_selection_AUC <- ggplot(results, aes(x = K)) +
 model_selection_AUC
 
 # Save the plot
-saveRDS(model_selection_AUC, "data analysis/results_method3_spca_grid_model_selection_onlyAUC.rds")
-ggsave("data analysis/results_method3_spca_grid_model_selection_onlyAUC.jpg", plot = model_selection_AUC,
+saveRDS(model_selection_AUC, here("data analysis/results_method3_spca_grid_model_selection_onlyAUC.rds"))
+ggsave(here("data analysis/results_method3_spca_grid_model_selection_onlyAUC.jpg"), plot = model_selection_AUC,
        width = 8, height = 8, dpi = 300)
-ggsave("data analysis/results_method3_spca_grid_model_selection_onlyAUC.png", plot = model_selection_AUC,
+ggsave(here("data analysis/results_method3_spca_grid_model_selection_onlyAUC.png"), plot = model_selection_AUC,
        width = 8, height = 8, dpi = 300)
 ```
 
@@ -719,7 +720,7 @@ I prefer the AUC only plot, as it is much easier to understand. The AUC plot sho
 ### Metric Results
 
 # Load the results
-results <- readRDS("data analysis/results_method3_spca_grid_raw_metrics.rds")
+results <- readRDS(here("data analysis/results_method3_spca_grid_raw_metrics.rds"))
 
 # average metrics over folds
 avg_results <- results %>%
@@ -745,7 +746,7 @@ Let us now visualize this with a ROC plot of this optimal combination
 ### make ROC plot
 
 # load the roc curves
-roc_curves <- readRDS("data analysis/results_method3_spca_grid_roc_curve_data.rds")
+roc_curves <- readRDS(here("data analysis/results_method3_spca_grid_roc_curve_data.rds"))
 
 # Selecting a specific number of components and hyperparameter values
 selected_k <- 8      # Number of components
@@ -796,10 +797,10 @@ roc_curve_combined <- ggplot() +
 roc_curve_combined
 
 # Save the plot
-saveRDS(roc_curve_combined, "data analysis/results_method3_spca_grid_roc_curve")
-ggsave("data analysis/results_method3_spca_grid_roc_curve.jpg", plot = roc_curve_combined,
+saveRDS(roc_curve_combined, here("data analysis/results_method3_spca_grid_roc_curve"))
+ggsave(here("data analysis/results_method3_spca_grid_roc_curve.jpg"), plot = roc_curve_combined,
        width = 8, height = 8, dpi = 300)
-ggsave("data analysis/results_method3_spca_grid_roc_curve.png", plot = roc_curve_combined,
+ggsave(here("data analysis/results_method3_spca_grid_roc_curve.png"), plot = roc_curve_combined,
        width = 8, height = 8, dpi = 300)
 ```
 
